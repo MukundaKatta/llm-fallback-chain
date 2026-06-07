@@ -153,6 +153,36 @@ def test_custom_predicate_skips_non_retryable():
     assert called["openai"] == 0
 
 
+def test_keyboard_interrupt_propagates_without_fallback():
+    """Control-flow exceptions (KeyboardInterrupt) must not be swallowed as a
+    fallback. The next provider should never run."""
+    called = {"b": 0}
+
+    def a():
+        raise KeyboardInterrupt("user hit ctrl-c")
+
+    def b():
+        called["b"] += 1
+        return "should not happen"
+
+    chain = FallbackChain([("a", a), ("b", b)])
+    with pytest.raises(KeyboardInterrupt):
+        chain.call()
+    assert called["b"] == 0
+
+
+def test_system_exit_propagates_without_fallback():
+    """SystemExit must propagate rather than triggering a fallback."""
+    chain = FallbackChain(
+        [
+            ("a", lambda: (_ for _ in ()).throw(SystemExit(1))),
+            ("b", lambda: "should not happen"),
+        ]
+    )
+    with pytest.raises(SystemExit):
+        chain.call()
+
+
 def test_custom_predicate_allows_fallback_on_whitelisted():
     chain = FallbackChain(
         [
@@ -271,6 +301,23 @@ async def test_async_callback_fires():
     )
     await chain.call_async()
     assert calls == [("a", "b")]
+
+
+async def test_async_keyboard_interrupt_propagates_without_fallback():
+    """call_async must also let control-flow exceptions propagate."""
+    called = {"b": 0}
+
+    async def a():
+        raise KeyboardInterrupt("user hit ctrl-c")
+
+    async def b():
+        called["b"] += 1
+        return "should not happen"
+
+    chain = FallbackChain([("a", a), ("b", b)])
+    with pytest.raises(KeyboardInterrupt):
+        await chain.call_async()
+    assert called["b"] == 0
 
 
 async def test_async_custom_predicate_skips_non_retryable():

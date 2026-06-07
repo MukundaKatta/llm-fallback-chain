@@ -123,9 +123,8 @@ class FallbackChain:
                 if inspect.isawaitable(result):
                     # support async providers from a sync caller
                     result = asyncio.run(_await(result))
-                elapsed = (time.perf_counter() - start) * 1000.0
                 return ChainResult(value=result, provider=name, attempts=failures)
-            except BaseException as exc:  # noqa: BLE001 - we re-raise non-fallback below
+            except Exception as exc:  # noqa: BLE001 - we re-raise non-fallback below
                 elapsed = (time.perf_counter() - start) * 1000.0
                 attempt = Attempt(name=name, exception=exc, duration_ms=elapsed)
                 if not self._should_fall_back(exc):
@@ -150,9 +149,8 @@ class FallbackChain:
                 result = fn(*args, **kwargs)
                 if inspect.isawaitable(result):
                     result = await result
-                elapsed = (time.perf_counter() - start) * 1000.0
                 return ChainResult(value=result, provider=name, attempts=failures)
-            except BaseException as exc:  # noqa: BLE001 - we re-raise non-fallback below
+            except Exception as exc:  # noqa: BLE001 - we re-raise non-fallback below
                 elapsed = (time.perf_counter() - start) * 1000.0
                 attempt = Attempt(name=name, exception=exc, duration_ms=elapsed)
                 if not self._should_fall_back(exc):
