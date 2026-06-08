@@ -54,6 +54,36 @@ class AllProvidersFailedError(Exception):
         super().__init__(f"all providers failed: {names}")
 
 
+class _RunningLoopError(RuntimeError):
+    """Internal marker for "sync call() hit an async provider inside a loop".
+
+    Subclasses RuntimeError so callers can still ``except RuntimeError``, but
+    the chain re-raises it unconditionally instead of treating it as a
+    fallback-worthy provider failure.
+    """
+
+
+def _ensure_no_running_loop(awaitable: Awaitable[Any]) -> None:
+    """Guard against driving an async provider from inside a running loop.
+
+    ``asyncio.run`` cannot be called when an event loop is already running.
+    Without this guard that would surface as a confusing ``RuntimeError``
+    swallowed by the fallback logic, masking a real provider as "failed".
+    """
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return  # no running loop: asyncio.run is safe
+    # A loop is running. Close the unawaited coroutine to avoid a warning.
+    close = getattr(awaitable, "close", None)
+    if callable(close):
+        close()
+    raise _RunningLoopError(
+        "cannot drive an async provider from sync call() inside a running "
+        "event loop; use 'await chain.call_async(...)' instead"
+    )
+
+
 # default predicate: any exception is a reason to fall back
 def _default_should_fall_back(exc: BaseException) -> bool:
     return True
@@ -113,6 +143,10 @@ class FallbackChain:
         If a provider is async (returns a coroutine), it is run via
         `asyncio.run` so this method stays synchronous. Prefer `call_async`
         if you are already inside an event loop.
+
+        Raises:
+            RuntimeError: if an async provider is encountered while an event
+                loop is already running. Use `call_async` from async code.
         """
         failures: list[Attempt] = []
         last = len(self._providers) - 1
@@ -122,8 +156,12 @@ class FallbackChain:
                 result = fn(*args, **kwargs)
                 if inspect.isawaitable(result):
                     # support async providers from a sync caller
+                    _ensure_no_running_loop(result)
                     result = asyncio.run(_await(result))
                 return ChainResult(value=result, provider=name, attempts=failures)
+            except _RunningLoopError:
+                # Usage error, not a provider failure. Never fall back on this.
+                raise
             except Exception as exc:  # noqa: BLE001 - we re-raise non-fallback below
                 elapsed = (time.perf_counter() - start) * 1000.0
                 attempt = Attempt(name=name, exception=exc, duration_ms=elapsed)

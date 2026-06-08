@@ -373,6 +373,41 @@ def test_sync_call_supports_async_provider_via_asyncio_run():
     assert result.provider == "a"
 
 
+async def test_sync_call_with_async_provider_inside_loop_raises_clear_error():
+    """Calling the sync `call()` from inside a running event loop when a
+    provider is async cannot use asyncio.run. It must raise a clear RuntimeError
+    pointing at `call_async`, NOT silently fall back / report the provider as
+    failed."""
+
+    async def a():
+        return "should not be reached via sync call() in a loop"
+
+    chain = FallbackChain([("a", a)])
+    with pytest.raises(RuntimeError, match="call_async"):
+        chain.call()
+
+
+async def test_sync_call_async_in_loop_not_swallowed_by_permissive_predicate():
+    """The running-loop usage error must propagate even when should_fall_back is
+    permissive; it must not be masked as AllProvidersFailedError."""
+    fallback_called = {"n": 0}
+
+    async def a():
+        return "x"
+
+    def b():
+        fallback_called["n"] += 1
+        return "fallback"
+
+    chain = FallbackChain(
+        [("a", a), ("b", b)],
+        should_fall_back=lambda exc: True,
+    )
+    with pytest.raises(RuntimeError):
+        chain.call()
+    assert fallback_called["n"] == 0
+
+
 # ---------- introspection / wiring ----------
 
 
